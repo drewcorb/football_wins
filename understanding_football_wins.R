@@ -31,7 +31,11 @@ defense_data <-
   read_csv(file = "GitHub/football_wins/defense_data.csv") |>
   # should've renamed these cols before creating the csv but such is life
   rename(Home_Goal_Scorers = Home_Goals
-         , Away_Goal_Scorers = Away_Goals)
+         , Away_Goal_Scorers = Away_Goals) |>
+  # let's clean up a few more column names. get rid of spaces and some symbols
+  rename_with(.fn = ~ str_replace_all(., " ", "_")) |>
+  rename_with(.fn = ~ str_replace_all(., "\\+", "_plus_"))
+
 passing_data <-
   read_csv(file = "GitHub/football_wins/passing_data.csv") |>
   # once again
@@ -64,9 +68,6 @@ all_match_data <-
   # lots of duplicate columns, keep those with suffix .x and drop those with .y
   rename_with(.fn = ~ str_replace_all(., "\\.x$", "")) |>
   select(-contains(".y")) |>
-  # let's clean up a few more column names. get rid of spaces and some symbols
-  rename_with(.fn = ~ str_replace_all(., " ", "_")) |>
-  rename_with(.fn = ~ str_replace_all(., "\\+", "_plus_")) |>
   # finally add the column that we'll be predicting on (match result)
   mutate(Match_Result = case_when(Home_Score > Away_Score ~ "home_win"
                                   , Home_Score == Away_Score ~ "draw"
@@ -79,19 +80,49 @@ all_match_data |>
   mutate(pct = n/sum(n))
 # We have a relatively balanced data set, with home wins being the most common and draws being the least common.
 
+# Defensive data
 # As far as predictor variables, let's start looking at defensive variables.
-# First examine the correlation between the variables
-all_match_data |>
+# First examine the correlation between the variables. At this point we won't yet need to work with the wide data, so let's select the defensive variables from defense data.
+defensive_exploration <-
+  defense_data |>
+  # add a column denoting goals allowed
+  mutate(Goals_Allowed = case_when(Home_Away == "Home" ~ Away_Score
+                                   , Home_Away == "Away" ~ Home_Score)) |>
   # select only the variables that are associated with defense
   select(contains("Tackles") | contains("Challenges") | contains("Blocks") |
-              contains("Int") | contains("Clr") | contains("Err")) |>
+              contains("Int") | contains("Clr") | contains("Err"))
+
+defensive_exploration |>
   # For now, 
-  select(-Home_Tkl_Tackles
-         , - Home_Blocks_Blocks
-         , -Home_Tkl_Challenges, -Home_Lost_Challenges
-         , -Home_Tkl_plus_Int
+  select(-Tkl_Tackles
+         , -Blocks_Blocks
+         , -Tkl_Challenges, -Lost_Challenges
+         , -Tkl_plus_Int
+         , -Goals_Allowed
          ) |>
   cor() |> # compute correlation 
-  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200), tl.col = "black", method = "ellipse")
+  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
+           , tl.col = "black"
+           , method = "ellipse")
+
+# The correlation plot shows that these variables are relatively uncorrelated with each other. However we see that tackles won is somewhat correlated with the number of tackles in each third of the pitch. Let's convert tackles won into a won tackles percent and take another look.
+defensive_exploration <-
+  defensive_exploration |>
+  mutate(TklW_Percent = TklW_Tackles/Tkl_Tackles) |>
+  relocate(TklW_Percent) # no other argument moves the column to the front
+
+defensive_exploration |>
+  # For now, 
+  select(-Tkl_Tackles, -TklW_Tackles
+         , -Blocks_Blocks
+         , -Tkl_Challenges, -Lost_Challenges
+         , -Tkl_plus_Int
+         , -Goals_Allowed
+  ) |>
+  cor() |> # compute correlation 
+  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
+           , tl.col = "black"
+           , method = "ellipse")
+# That looks like it helped. 
 
 # We have data from 7160 matches. Notice that some columns seem obviously redundant. {home_away}_Tkl_Tackles
