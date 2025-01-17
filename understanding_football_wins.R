@@ -6,12 +6,12 @@ library(tidyr) # pivot_wider
 library(stringr) # str_replace_all
 library(ggplot2)
 library(corrplot)
+library(rsample) # resampling functions
 
 library(lubridate)
 library(tidymodels)
 library(xgboost)
 library(finetune) # control_sim_anneal
-library(rsample) # sliding_period (among others)
 library(bestNormalize) # step_orderNorm
 # library(embed) # step_umap
 library(RSQLite)
@@ -98,7 +98,6 @@ defensive_exploration |>
          , -Blocks_Blocks
          , -Tkl_Challenges, -Lost_Challenges
          , -Tkl_plus_Int
-         , -Goals_Allowed
          ) |>
   cor() |> # compute correlation 
   corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
@@ -117,12 +116,31 @@ defensive_exploration |>
          , -Blocks_Blocks
          , -Tkl_Challenges, -Lost_Challenges
          , -Tkl_plus_Int
-         , -Goals_Allowed
   ) |>
   cor() |> # compute correlation 
   corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
            , tl.col = "black"
            , method = "ellipse")
-# That looks like it helped. 
 
-# We have data from 7160 matches. Notice that some columns seem obviously redundant. {home_away}_Tkl_Tackles
+# ==== Build a model ====
+# There's plenty more we can explore with the data but let's first build the structure of a simple model.
+
+# That looks like it helped. So let's create a new object, model data, that has these transformations.
+defense_model_data <-
+  defense_data |>
+  # add a column denoting goals allowed
+  mutate(Goals_Allowed = case_when(Home_Away == "Home" ~ Away_Score
+                                   , Home_Away == "Away" ~ Home_Score)
+         , TklW_Percent = TklW_Tackles/Tkl_Tackles) |>
+  select(League, Match_Date # let's keep some identifying data here
+         , TklW_Percent, Def_3rd_Tackles, Mid_3rd_Tackles, Att_3rd_Tackles
+         , Att_Challenges, Tkl_percent_Challenges
+         , Sh_Blocks, Pass_Blocks
+         , Int, Clr, Err
+         , Goals_Allowed)
+
+# Let's use n-fold cross-validation so that we can test out some hyperparameter values on out-of-sample data. Let's also stratify by the outcome variable.
+
+defense_folds <- vfold_cv(defense_model_data
+                          , v = 5
+                          , strata = Goals_Allowed)
