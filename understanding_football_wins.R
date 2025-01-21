@@ -7,6 +7,10 @@ library(stringr) # str_replace_all
 library(ggplot2)
 library(corrplot)
 library(rsample) # resampling functions
+library(recipes)
+library(parsnip) # boost_tree
+library(workflows) # add_xxx functions
+library(yardstick) # metric_set, other metric functions
 
 library(lubridate)
 library(tidymodels)
@@ -122,6 +126,20 @@ defensive_exploration |>
            , tl.col = "black"
            , method = "ellipse")
 
+# That looks like it helped. So let's create a new object, model data, that has these transformations.
+defense_model_data <-
+  defense_data |>
+  # add a column denoting goals allowed
+  mutate(Goals_Allowed = case_when(Home_Away == "Home" ~ Away_Score
+                                   , Home_Away == "Away" ~ Home_Score)
+         , TklW_Percent = TklW_Tackles/Tkl_Tackles) |>
+  select(League, Match_Date # let's keep some identifying data here
+         , TklW_Percent, Def_3rd_Tackles, Mid_3rd_Tackles, Att_3rd_Tackles
+         , Att_Challenges, Tkl_percent_Challenges
+         , Sh_Blocks, Pass_Blocks
+         , Int, Clr, Err
+         , Goals_Allowed)
+
 # Let's also look at the distribution of the response variable, Goals_Allowed.
 ggplot(data = defense_model_data) +
   geom_histogram(aes(x = Goals_Allowed)
@@ -148,22 +166,11 @@ defense_model_data <-
   defense_model_data |>
   mutate(ln_Goals_Allowed = log(Goals_Allowed + 1))
 
+
+
 # ==== Build a model ====
 # There's plenty more we can explore with the data but let's first build the structure of a simple model.
 
-# That looks like it helped. So let's create a new object, model data, that has these transformations.
-defense_model_data <-
-  defense_data |>
-  # add a column denoting goals allowed
-  mutate(Goals_Allowed = case_when(Home_Away == "Home" ~ Away_Score
-                                   , Home_Away == "Away" ~ Home_Score)
-         , TklW_Percent = TklW_Tackles/Tkl_Tackles) |>
-  select(League, Match_Date # let's keep some identifying data here
-         , TklW_Percent, Def_3rd_Tackles, Mid_3rd_Tackles, Att_3rd_Tackles
-         , Att_Challenges, Tkl_percent_Challenges
-         , Sh_Blocks, Pass_Blocks
-         , Int, Clr, Err
-         , Goals_Allowed)
 
 # Let's use n-fold cross-validation so that we can test out some hyperparameter values on out-of-sample data. Let's also stratify by the outcome variable.
 
@@ -171,9 +178,30 @@ defense_folds <- vfold_cv(defense_model_data
                           , v = 5
                           , strata = Goals_Allowed)
 
-# specify the model
+# create the recipe
 defense_recipe <-
-  recipe(goals_allowed ~ .
+  recipe(Goals_Allowed ~ .
          , data = defense_model_data) |>
+  # make sure the League and Match_Date columns are not treated as predictors
   update_role(League, new_role = "league") |>
   update_role(Match_Date, new_role = "match_date")
+
+# specify the model
+defense_model <-
+  boost_tree(mtry = tune()
+             , trees = 400 # let's semi-arbitrarily say 400 is just right
+             , min_n = tune() 
+             , tree_depth = tune()
+             , learn_rate = tune() # eta
+             , loss_reduction = tune() # gamma
+             , sample_size = tune()) |>
+  set_engine("xgboost") |>
+  set_mode("regression")
+
+defense_workflow <-
+  workflow() |>
+  add_recipe(defense_recipe) |>
+  add_model(defense_model)
+
+defense_eval_metrics <- metric_set(mae)
+  
