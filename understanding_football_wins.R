@@ -122,6 +122,32 @@ defensive_exploration |>
            , tl.col = "black"
            , method = "ellipse")
 
+# Let's also look at the distribution of the response variable, Goals_Allowed.
+ggplot(data = defense_model_data) +
+  geom_histogram(aes(x = Goals_Allowed)
+                 , binwidth = 0.5
+                 , color = "#000000", fill = "#0099F8") +
+  scale_x_continuous(breaks = seq(from = -1, to = 10, by = 1)) +
+  labs(title = "Distribution of goals allowed"
+       , x = "Goals allowed")
+# A quick glance at the histogram of goals allowed shows that the data are positively skewed. This could inhibit our ability to predict that variable, so let's see if we can reduce the skewness.
+moments::skewness(defense_model_data$Goals_Allowed) # 0.98
+# Let's try applying a log transformation to see if we can reduce the skewness.
+ggplot(data = defense_model_data |>
+                    mutate(ln_Goals_Allowed = log(Goals_Allowed+1))) +
+  geom_histogram(aes(x = ln_Goals_Allowed)
+                 # , binwidth = 0.5
+                 , color = "#000000", fill = "#0099F8") +
+  # scale_x_continuous(breaks = seq(from = -1, to = 10, by = 1)) +
+  labs(title = "Distribution of ln(goals allowed)"
+       , x = "ln(goals allowed)")
+# It's not clearly better by just looking at this, so let's check the skewness.
+moments::skewness(log(defense_model_data$Goals_Allowed + 1))
+# The skewness is definitely closer to 0, -0.07 but I'm still not sure if this is the right call. Let's add this log-transformed variable to our dataframe and decide later whether or not to use it.
+defense_model_data <-
+  defense_model_data |>
+  mutate(ln_Goals_Allowed = log(Goals_Allowed + 1))
+
 # ==== Build a model ====
 # There's plenty more we can explore with the data but let's first build the structure of a simple model.
 
@@ -144,3 +170,10 @@ defense_model_data <-
 defense_folds <- vfold_cv(defense_model_data
                           , v = 5
                           , strata = Goals_Allowed)
+
+# specify the model
+defense_recipe <-
+  recipe(goals_allowed ~ .
+         , data = defense_model_data) |>
+  update_role(League, new_role = "league") |>
+  update_role(Match_Date, new_role = "match_date")
