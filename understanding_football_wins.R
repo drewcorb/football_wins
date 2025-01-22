@@ -11,11 +11,13 @@ library(recipes)
 library(parsnip) # boost_tree
 library(workflows) # add_xxx functions
 library(yardstick) # metric_set, other metric functions
+library(dials) # tuning functions
+library(tune)
+library(finetune) # control_sim_anneal
 
 library(lubridate)
 library(tidymodels)
 library(xgboost)
-library(finetune) # control_sim_anneal
 library(bestNormalize) # step_orderNorm
 # library(embed) # step_umap
 library(RSQLite)
@@ -186,6 +188,11 @@ defense_recipe <-
   update_role(League, new_role = "league") |>
   update_role(Match_Date, new_role = "match_date")
 
+num_predictors_defense <-
+  defense_recipe$var_info |>
+  filter(role == "predictor") |>
+  nrow()
+
 # specify the model
 defense_model <-
   boost_tree(mtry = tune()
@@ -204,4 +211,56 @@ defense_workflow <-
   add_model(defense_model)
 
 defense_eval_metrics <- metric_set(mae)
-  
+
+# Set up some ranges for tuning parameters
+defense_params <-
+  defense_workflow |>
+  extract_parameter_set_dials() |>
+  update(mtry = mtry(c(3, round(0.8*num_predictors_defense)))) |>
+  update(tree_depth = tree_depth(c(2, 8))) |>
+  update(learn_rate = learn_rate(c(0, 0.2)))
+
+defense_start_grid <-
+  defense_params |>
+  grid_max_entropy(size = 64)
+
+defense_initial <-
+  defense_workflow |>
+  tune_grid(resamples = defense_folds
+            , grid = defense_start_grid
+            , metrics = defense_eval_metrics)
+
+ctrl_sa <- control_sim_anneal(verbose = TRUE, no_improve = 20L)
+
+xgb_sa <-
+  defense_workflow |>
+  tune_sim_anneal(
+    resamples = defense_folds,
+    metrics = defense_eval_metrics,
+    initial = defense_initial,
+    param_info = defense_params,
+    iter = 200,
+    control = ctrl_sa
+  )
+
+show_best(xgb_sa
+          , metric = "mae")
+autoplot(xgb_sa, type = "performance")
+autoplot(xgb_sa, type = "parameters")
+
+# Let's use the second best by performance but with simpler structure (larger loss_reduction value). out of sample mean(mae) = 0.000808
+defense_tuned_params <-
+  tibble(mtry = 9
+         , min_n = 3
+         , tree_depth = 7
+         , learn_rate = 10^-1.01
+         , loss_reduction = 0.0005
+         , sample_size = 0.835)
+
+defense_final_workflow <-
+  defense_workflow |>
+  finalize_workflow(defense_tuned_params)
+
+defense_final_fit <-
+  defense_final_workflow |>
+  fit(defense_model_data)
