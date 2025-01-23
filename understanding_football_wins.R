@@ -274,3 +274,4 @@ defense_final_fit <-
 defense_final_fit |>
   pull_workflow_fit() |>
   vip(geom = "point")
+# It's clear from this plot that tackles-won percent, tackle-percent-challenges, and clearances are the most important stats to predicting goals allowed.
