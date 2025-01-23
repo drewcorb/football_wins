@@ -14,6 +14,7 @@ library(yardstick) # metric_set, other metric functions
 library(dials) # tuning functions
 library(tune)
 library(finetune) # control_sim_anneal
+library(vip) # vip (variable importance plot)
 
 library(lubridate)
 library(tidymodels)
@@ -184,6 +185,8 @@ defense_folds <- vfold_cv(defense_model_data
 defense_recipe <-
   recipe(Goals_Allowed ~ .
          , data = defense_model_data) |>
+  # make sure ln_goals_allowed is not a predictor
+  update_role(ln_Goals_Allowed, new_role = "alt_outcome") |>
   # make sure the League and Match_Date columns are not treated as predictors
   update_role(League, new_role = "league") |>
   update_role(Match_Date, new_role = "match_date")
@@ -264,3 +267,10 @@ defense_final_workflow <-
 defense_final_fit <-
   defense_final_workflow |>
   fit(defense_model_data)
+
+# ==== Explore the model ====
+
+# We can examine variable importance to get an idea of which variables make the biggest impact on preventing goals.
+defense_final_fit |>
+  pull_workflow_fit() |>
+  vip(geom = "point")
