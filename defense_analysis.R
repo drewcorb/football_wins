@@ -15,6 +15,7 @@ library(dials) # tuning functions
 library(tune)
 library(finetune) # control_sim_anneal
 library(vip) # vip (variable importance plot)
+library(DALEXtra) # model explanation
 
 library(lubridate)
 library(tidymodels)
@@ -220,8 +221,8 @@ defense_params <-
   defense_workflow |>
   extract_parameter_set_dials() |>
   update(mtry = mtry(c(3, round(0.8*num_predictors_defense)))) |>
-  update(tree_depth = tree_depth(c(2, 8))) |>
-  update(learn_rate = learn_rate(c(0, 0.2)))
+  update(tree_depth = tree_depth(c(2, 6))) |>
+  update(learn_rate = learn_rate(c(-5, -1))) # 10^-5 to 10^-1
 
 defense_start_grid <-
   defense_params |>
@@ -251,14 +252,14 @@ show_best(xgb_sa
 autoplot(xgb_sa, type = "performance")
 autoplot(xgb_sa, type = "parameters")
 
-# Let's use the second best by performance but with simpler structure (larger loss_reduction value). out of sample mean(mae) = 0.000808
+# There are several hyperparameter sets with equivalent out of sample mean(mae) =0.925. Let's use the top one here.
 defense_tuned_params <-
   tibble(mtry = 9
-         , min_n = 3
-         , tree_depth = 7
-         , learn_rate = 10^-1.01
-         , loss_reduction = 0.0005
-         , sample_size = 0.835)
+         , min_n = 19
+         , tree_depth = 5
+         , learn_rate = 0.00318
+         , loss_reduction = 0.000110
+         , sample_size = 0.281)
 
 defense_final_workflow <-
   defense_workflow |>
@@ -276,4 +277,68 @@ defense_final_fit |>
   vip(geom = "point")
 # It's clear from this plot that tackles-won percent, tackle-percent-challenges, and clearances are the most important stats to predicting goals allowed.
 
+# Let's continue our investigation of defensive parameters.
+
+defense_predictors <-
+  defense_recipe$var_info |> filter(role == "predictor") |> pull(variable)
+
+defense_explainer <-
+  explain_tidymodels(
+    model = defense_final_fit
+    , data = defense_model_data |> select(-Goals_Allowed)
+    , y = defense_model_data$Goals_Allowed
+    , label = "defense xgboost model"
+    , verbose = FALSE
+  )
+
+# we can compute a type of feature importance in which we shuffle the values of a feature amongst the observations and then predict the target variable, then compare to what degree the model performance is affected.
+permute_vip <- model_parts(defense_explainer
+                           , loss_function = loss_root_mean_square)
+
+# write a custom function that will help with 
+ggplot_importance <- function(...) {
+  obj <- list(...)
+  metric_name <- attr(obj[[1]], "loss_name")
+  metric_lab <- paste(metric_name
+                      , "after permutations\n(higher indicates more important)")
+  
+  full_vip <-
+    bind_rows(obj) |>
+    filter(variable != "_baseline_")
+  
+  perm_vals <-
+    full_vip |>
+    filter(variable == "_full_model_") |>
+    group_by(label) |>
+    summarise(dropout_loss = mean(dropout_loss))
+  
+  p <-
+    full_vip |>
+    filter(variable != "_full_model_") |>
+    mutate(variable = forcats::fct_reorder(variable, dropout_loss)) |>
+    ggplot(aes(dropout_loss, variable))
+  
+  if (length(obj) > 1) {
+    p <- p +
+      facet_wrap(vars(label)) +
+      geom_vline(data = perm_vals
+                 , aes(xintercept = dropout_loss
+                       , color = label)
+                 , linewidth = 1.4, lty = 2, alpha = 0.7)
+  } else {
+    p <- p +
+      geom_vline(data = perm_vals
+                 , aes(xintercept = dropout_loss)
+                 , linewidth = 1.4, lty = 2, alpha = 0.7) +
+      geom_boxplot(fill = "#91CBD765", alpha = 0.4)
+  }
+  
+  p +
+    theme(legend.position = "none") +
+    labs(x = metric_lab, y = NULL
+         , fill = NULL, color = NULL)
+}
+
+ggplot_importance(permute_vip)
+# There is some clearly strange behavior here where reordering variables such as League, Match_Date, and ln_Goals_Allowed result in changes in RMSE of the predictions, when those variables are specified as not predictors and thus should not change the RMSE.
 
