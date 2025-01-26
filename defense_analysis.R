@@ -274,7 +274,13 @@ defense_final_fit <-
 # We can examine variable importance to get an idea of which variables make the biggest impact on preventing goals.
 defense_final_fit |>
   pull_workflow_fit() |>
-  vip(geom = "point")
+  vip(geom = "point"
+      , method = "permute"
+      , train = defense_model_data
+      , target = "Goals_Allowed"
+      , metric = "RMSE"
+      , pred_wrapper = predict
+      )
 # It's clear from this plot that tackles-won percent, tackle-percent-challenges, and clearances are the most important stats to predicting goals allowed.
 
 # Let's continue our investigation of defensive parameters.
@@ -342,3 +348,35 @@ ggplot_importance <- function(...) {
 ggplot_importance(permute_vip)
 # There is some clearly strange behavior here where reordering variables such as League, Match_Date, and ln_Goals_Allowed result in changes in RMSE of the predictions, when those variables are specified as not predictors and thus should not change the RMSE.
 
+pdp_Err <- model_profile(defense_explainer, N = 500, variables = "Err")
+
+ggplot_pdp <- function(obj, x) {
+  p <-
+    as_tibble(obj$agr_profiles) |>
+    mutate(`_label_` = stringr::str_remove(`_label_`, "^[^_]*_")) |>
+    ggplot(aes(`_x_`, `_yhat_`)) +
+    geom_line(data = as_tibble(obj$cp_profiles)
+              , aes(x = {{ x }}, group = `_ids_`)
+              , linewidth = 0.5, alpha = 0.05, color = "gray50")
+  
+  num_colors <- n_distinct(obj$agr_profiles$`_label_`)
+  
+  if (num_colors > 1) {
+    p <- p + geom_line(aes(color = `_label_`), linewidth = 1.2, alpha = 0.8)
+  } else {
+    p <- p + geom_line(color = "midnightblue", linewidth = 1.2, alpha = 0.8)
+  }
+  
+  p
+}
+
+ggplot_pdp(pdp_Err, Err) +
+  labs(x = "Err", y = "Goals allowed"
+       , color = NULL)
+
+pdp_Clr <- model_profile(defense_explainer, N = 1000, variables = "Clr")
+
+ggplot_pdp(pdp_Clr, Clr) +
+  labs(x = "Clr", y = "Goals allowed"
+       , color = NULL)
+# Examining the plot for clearances shows that increasing the number of clearances has the largest impact on reducing goals allowed in the range of 10 to 30.
