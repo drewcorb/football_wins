@@ -1,0 +1,1 @@
+Retrieved most of the match stats using functions from the `worldfootballR` package, and leaned on Julia Silge and Max Kuhn's book Tidy Modeling with R for guidance using the `tidymodels` package, as well as some nice custom plotting functions laid out in the book.
