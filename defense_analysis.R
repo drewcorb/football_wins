@@ -271,17 +271,17 @@ defense_final_fit <-
 
 # ==== Explore the model ====
 
-# We can examine variable importance to get an idea of which variables make the biggest impact on preventing goals.
+# We can examine variable importance to get an idea of which variables make the biggest impact on preventing goals. Let's start by plotting the gain attributed to each variable.
 defense_final_fit |>
   pull_workflow_fit() |>
   vip(geom = "point"
-      , method = "permute"
-      , train = defense_model_data
-      , target = "Goals_Allowed"
-      , metric = "RMSE"
-      , pred_wrapper = predict
+      # , method = "permute"
+      # , train = defense_model_data
+      # , target = "Goals_Allowed"
+      # , metric = "RMSE"
+      # , pred_wrapper = predict
       )
-# It's clear from this plot that tackles-won percent, tackle-percent-challenges, and clearances are the most important stats to predicting goals allowed.
+# It's clear from this plot that errors committed and clearances are the most important stats to predicting goals allowed. This is followed by percent of challenges won and total challenges attempted. Interestingly, we see that the number of tackles attempted in the defensive third don't play an important role in predicting goals allowed. I wonder summing the tackles in each third into the total number of tackles, or summing the middle and defensive third tackles might show more impact than each variable individually.
 
 # Let's continue our investigation of defensive parameters.
 
@@ -373,6 +373,7 @@ ggplot_pdp <- function(obj, x) {
 ggplot_pdp(pdp_Err, Err) +
   labs(x = "Err", y = "Goals allowed"
        , color = NULL)
+# Here we see that even committing a single error that leads to an opponent's shot leads to a significant increase in goals allowed, with the effect diminishing as more errors are committed.
 
 pdp_Clr <- model_profile(defense_explainer, N = 1000, variables = "Clr")
 
