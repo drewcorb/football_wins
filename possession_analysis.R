@@ -126,10 +126,11 @@ possession_recipe <-
   # update_role(League, new_role = "league") |>
   # update_role(Match_Date, new_role = "match_date")
 
-num_predictors_possession <-
-  possession_recipe$var_info |>
-  filter(role == "predictor") |>
-  nrow()
+
+possession_predictors <-
+  possession_recipe$var_info |> filter(role == "predictor") |> pull(variable)
+
+num_predictors_possession <- length(possession_predictors)
 
 # specify the model
 possession_model <-
@@ -203,4 +204,123 @@ possession_final_fit <-
   possession_final_workflow |>
   fit(possession_model_data)
 
+# ==== Explore the model ====
+
+# We can examine variable importance to get an idea of which variables make the biggest impact on goal difference. Let's start by plotting the gain attributed to each variable.
+possession_final_fit |>
+  pull_workflow_fit() |>
+  vip(geom = "point"
+      # , method = "permute"
+      # , train = defense_model_data
+      # , target = "Goals_Allowed"
+      # , metric = "RMSE"
+      # , pred_wrapper = predict
+  )
+# Wow! I wasn't sure if any variables would stand out too much, but clear we have a few stats here that jump out above the others: touches in the attacking penalty area, carries into the penalty area, total touches, and total carries. This really indicates to me that it might be preferable to cast these instead as total number of touches, percent of of touches in attacking penalty area, total number of carries, and percent of carries in the attacking penalty area, because that way we could decrease the correlation between the variables. Let's take a quick look at the correlation between these 4 variables.
+
+possession_model_data |>
+  select(Touches_Touches, Att_Pen_Touches, Carries_Carries, CPA_Carries) |>
+  cor() |> # compute correlation 
+  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
+           , tl.col = "black"
+           , method = "ellipse")
+
+# Clearly there is strong correlation between these variables, but most surprising to me (perhaps it shouldn't be) is the strongest correlation between total touches and total carries. That does make sense, but I suppose I just expected the strongest correlations to be within the same type of statistic (between total touches and penalty touches, and between total carries and penalty carries). I think there will be some opportunity to consolidate some variables and let others emerge as strong predictors too. But let's continue this analysis, and then come back to some different types of tweaks.
+
+# Let's continue our investigation of possession parameters.
+
+possession_explainer <-
+  explain_tidymodels(
+    model = possession_final_fit
+    , data = possession_model_data |> select(-Goal_Difference)
+    , y = possession_model_data$Goal_Difference
+    , label = "possession xgboost model"
+    , verbose = FALSE
+  )
+
+# We can compute a type of feature importance in which we shuffle the values of a feature amongst the observations and then predict the target variable, then compare to what degree the model performance is affected.
+permute_vip <- model_parts(possession_explainer
+                           , loss_function = loss_root_mean_square)
+
+# write a custom function that will help with 
+ggplot_importance <- function(...) {
+  obj <- list(...)
+  metric_name <- attr(obj[[1]], "loss_name")
+  metric_lab <- paste(metric_name
+                      , "after permutations\n(higher indicates more important)")
+  
+  full_vip <-
+    bind_rows(obj) |>
+    filter(variable != "_baseline_")
+  
+  perm_vals <-
+    full_vip |>
+    filter(variable == "_full_model_") |>
+    group_by(label) |>
+    summarise(dropout_loss = mean(dropout_loss))
+  
+  p <-
+    full_vip |>
+    filter(variable != "_full_model_") |>
+    mutate(variable = forcats::fct_reorder(variable, dropout_loss)) |>
+    ggplot(aes(dropout_loss, variable))
+  
+  if (length(obj) > 1) {
+    p <- p +
+      facet_wrap(vars(label)) +
+      geom_vline(data = perm_vals
+                 , aes(xintercept = dropout_loss
+                       , color = label)
+                 , linewidth = 1.4, lty = 2, alpha = 0.7)
+  } else {
+    p <- p +
+      geom_vline(data = perm_vals
+                 , aes(xintercept = dropout_loss)
+                 , linewidth = 1.4, lty = 2, alpha = 0.7) +
+      geom_boxplot(fill = "#91CBD765", alpha = 0.4)
+  }
+  
+  p +
+    theme(legend.position = "none") +
+    labs(x = metric_lab, y = NULL
+         , fill = NULL, color = NULL)
+}
+
+ggplot_importance(permute_vip)
+# This time the feature importance plot looks sensible, as opposed to when I first created one for the defense variables. I suspected that had to do with leaving non-predictor variables in the data set (League and Match Date), so I omitted those columns here. It looks like that fixed the issue, so either the model_parts() function or the the custom plotting function doesn't handle those types of columns well. Onto the actual analysis though.
+
+
+pdp_Err <- model_profile(defense_explainer, N = 500, variables = "Err")
+
+ggplot_pdp <- function(obj, x) {
+  p <-
+    as_tibble(obj$agr_profiles) |>
+    mutate(`_label_` = stringr::str_remove(`_label_`, "^[^_]*_")) |>
+    ggplot(aes(`_x_`, `_yhat_`)) +
+    geom_line(data = as_tibble(obj$cp_profiles)
+              , aes(x = {{ x }}, group = `_ids_`)
+              , linewidth = 0.5, alpha = 0.05, color = "gray50")
+  
+  num_colors <- n_distinct(obj$agr_profiles$`_label_`)
+  
+  if (num_colors > 1) {
+    p <- p + geom_line(aes(color = `_label_`), linewidth = 1.2, alpha = 0.8)
+  } else {
+    p <- p + geom_line(color = "midnightblue", linewidth = 1.2, alpha = 0.8)
+  }
+  
+  p
+}
+
+ggplot_pdp(pdp_Err, Err) +
+  labs(x = "Err", y = "Goals allowed"
+       , color = NULL)
+# Here we see that even committing a single error that leads to an opponent's shot leads to a significant increase in goals allowed, with the effect diminishing as more errors are committed.
+
+pdp_Clr <- model_profile(defense_explainer, N = 1000, variables = "Clr")
+
+ggplot_pdp(pdp_Clr, Clr) +
+  labs(x = "Clr", y = "Goals allowed"
+       , color = NULL)
+# Examining the plot for clearances shows that increasing the number of clearances has the largest impact on reducing goals allowed in the range of 10 to 30.
 
