@@ -175,7 +175,6 @@ defense_model_data <-
 # ==== Build a model ====
 # There's plenty more we can explore with the data but let's first build the structure of a simple model.
 
-
 # Let's use n-fold cross-validation so that we can test out some hyperparameter values on out-of-sample data. Let's also stratify by the outcome variable.
 
 defense_folds <- vfold_cv(defense_model_data

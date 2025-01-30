@@ -53,6 +53,14 @@ possession_data <-
 possession_data |>
   count(Goal_Difference)
 
+# Let's take a more visual look at the distribution of the response variable, Goals_Allowed.
+ggplot(data = possession_data) +
+  geom_histogram(aes(x = Goal_Difference)
+                 , binwidth = 0.5
+                 , color = "#000000", fill = "#0099F8") +
+  scale_x_continuous(breaks = seq(from = -1, to = 10, by = 1)) +
+  labs(title = "Distribution of goal difference"
+       , x = "Goal difference")
 
 # First examine the correlation between the variables. At this point we won't yet need to work with the wide data, so let's select the defensive variables from defense data.
 possession_exploration <-
@@ -98,38 +106,101 @@ possession_predictor_variables <-
 
 possession_model_data <-
   possession_data |>
-  
-  select(League, Match_Date # let's keep some identifying data here
-         , TklW_Percent, Def_3rd_Tackles, Mid_3rd_Tackles, Att_3rd_Tackles
-         , Att_Challenges, Tkl_percent_Challenges
-         , Sh_Blocks, Pass_Blocks
-         , Int, Clr, Err
-         , Goals_Allowed)
+  select(all_of(possession_predictor_variables), Goal_Difference)
 
-# Let's also look at the distribution of the response variable, Goals_Allowed.
-ggplot(data = defense_model_data) +
-  geom_histogram(aes(x = Goals_Allowed)
-                 , binwidth = 0.5
-                 , color = "#000000", fill = "#0099F8") +
-  scale_x_continuous(breaks = seq(from = -1, to = 10, by = 1)) +
-  labs(title = "Distribution of goals allowed"
-       , x = "Goals allowed")
-# A quick glance at the histogram of goals allowed shows that the data are positively skewed. This could inhibit our ability to predict that variable, so let's see if we can reduce the skewness.
-moments::skewness(defense_model_data$Goals_Allowed) # 0.98
-# Let's try applying a log transformation to see if we can reduce the skewness.
-ggplot(data = defense_model_data |>
-         mutate(ln_Goals_Allowed = log(Goals_Allowed+1))) +
-  geom_histogram(aes(x = ln_Goals_Allowed)
-                 # , binwidth = 0.5
-                 , color = "#000000", fill = "#0099F8") +
-  # scale_x_continuous(breaks = seq(from = -1, to = 10, by = 1)) +
-  labs(title = "Distribution of ln(goals allowed)"
-       , x = "ln(goals allowed)")
-# It's not clearly better by just looking at this, so let's check the skewness.
-moments::skewness(log(defense_model_data$Goals_Allowed + 1))
-# The skewness is definitely closer to 0, -0.07 but I'm still not sure if this is the right call. Let's add this log-transformed variable to our dataframe and decide later whether or not to use it.
-defense_model_data <-
-  defense_model_data |>
-  mutate(ln_Goals_Allowed = log(Goals_Allowed + 1))
+# ==== Build a model ====
+
+# There's plenty more we can explore with the data but let's first build the structure of a simple model.
+
+# Let's use n-fold cross-validation so that we can test out some hyperparameter values on out-of-sample data. Let's also stratify by the outcome variable.
+
+possession_folds <- vfold_cv(possession_model_data
+                          , v = 5
+                          , strata = Goal_Difference)
+
+# create the recipe
+possession_recipe <-
+  recipe(Goal_Difference ~ .
+         , data = possession_model_data)
+  # make sure the League and Match_Date columns are not treated as predictors
+  # update_role(League, new_role = "league") |>
+  # update_role(Match_Date, new_role = "match_date")
+
+num_predictors_possession <-
+  possession_recipe$var_info |>
+  filter(role == "predictor") |>
+  nrow()
+
+# specify the model
+possession_model <-
+  boost_tree(mtry = tune()
+             , trees = 400 # let's semi-arbitrarily say 400 is just right
+             , min_n = tune() 
+             , tree_depth = tune()
+             , learn_rate = tune() # eta
+             , loss_reduction = tune() # gamma
+             , sample_size = tune()) |>
+  set_engine("xgboost") |>
+  set_mode("regression")
+
+possession_workflow <-
+  workflow() |>
+  add_recipe(possession_recipe) |>
+  add_model(possession_model)
+
+possession_eval_metrics <- metric_set(mae)
+
+# Set up some ranges for tuning parameters
+possession_params <-
+  possession_workflow |>
+  extract_parameter_set_dials() |>
+  update(mtry = mtry(c(3, round(0.8*num_predictors_possession)))) |>
+  update(tree_depth = tree_depth(c(2, 6))) |>
+  update(learn_rate = learn_rate(c(-5, -1))) # 10^-5 to 10^-1
+
+possession_start_grid <-
+  possession_params |>
+  grid_max_entropy(size = 64)
+
+possession_initial <-
+  possession_workflow |>
+  tune_grid(resamples = possession_folds
+            , grid = possession_start_grid
+            , metrics = possession_eval_metrics)
+
+ctrl_sa <- control_sim_anneal(verbose = TRUE, no_improve = 20L)
+
+xgb_sa <-
+  possession_workflow |>
+  tune_sim_anneal(
+    resamples = possession_folds,
+    metrics = possession_eval_metrics,
+    initial = possession_initial,
+    param_info = possession_params,
+    iter = 200,
+    control = ctrl_sa
+  )
+
+show_best(xgb_sa
+          , metric = "mae")
+autoplot(xgb_sa, type = "performance")
+autoplot(xgb_sa, type = "parameters")
+
+# There are several hyperparameter sets with equivalent out of sample mean(mae) =1.32. Let's use one that is minimizes complexity of each tree, with tree_depth = 4 (as opposed to others that are 5 or 6).
+possession_tuned_params <-
+  tibble(mtry = 12
+         , min_n = 28
+         , tree_depth = 4
+         , learn_rate = 0.0174
+         , loss_reduction = 0.165
+         , sample_size = 0.159)
+
+possession_final_workflow <-
+  possession_workflow |>
+  finalize_workflow(possession_tuned_params)
+
+possession_final_fit <-
+  possession_final_workflow |>
+  fit(possession_model_data)
 
 
