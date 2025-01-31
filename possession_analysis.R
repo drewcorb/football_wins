@@ -289,8 +289,9 @@ ggplot_importance <- function(...) {
 ggplot_importance(permute_vip)
 # This time the feature importance plot looks sensible, as opposed to when I first created one for the defense variables. I suspected that had to do with leaving non-predictor variables in the data set (League and Match Date), so I omitted those columns here. It looks like that fixed the issue, so either the model_parts() function or the the custom plotting function doesn't handle those types of columns well. Onto the actual analysis though.
 
+# In this variable importance plot created by permuting each variable amongst the observations, one more variable stands out as quite important: PrgR_Receiving, or total number of progressive passes received.
 
-pdp_Err <- model_profile(defense_explainer, N = 500, variables = "Err")
+pdp_Att_Pen_Touches <- model_profile(possession_explainer, N = 500, variables = "Att_Pen_Touches")
 
 ggplot_pdp <- function(obj, x) {
   p <-
@@ -312,15 +313,25 @@ ggplot_pdp <- function(obj, x) {
   p
 }
 
-ggplot_pdp(pdp_Err, Err) +
-  labs(x = "Err", y = "Goals allowed"
+ggplot_pdp(pdp_Att_Pen_Touches, Att_Pen_Touches) +
+  labs(x = "Att_Pen_Touches", y = "Goal difference"
        , color = NULL)
 # Here we see that even committing a single error that leads to an opponent's shot leads to a significant increase in goals allowed, with the effect diminishing as more errors are committed.
 
-pdp_Clr <- model_profile(defense_explainer, N = 1000, variables = "Clr")
+pdp_PrgR_Receiving <- model_profile(possession_explainer, N = 1000, variables = "PrgR_Receiving")
 
-ggplot_pdp(pdp_Clr, Clr) +
-  labs(x = "Clr", y = "Goals allowed"
+ggplot_pdp(pdp_PrgR_Receiving, PrgR_Receiving) +
+  labs(x = "PrgR_Receiving", y = "Goal difference"
        , color = NULL)
 # Examining the plot for clearances shows that increasing the number of clearances has the largest impact on reducing goals allowed in the range of 10 to 30.
+
+# ==== Second iteration of possession investigation ====
+# We gained information about some of the most important possession statistics toward modeling goal differential, however the most important ones are highly correlated with each other. If we transform/remove some of those, it's possible that other important statistics will emerge.
+
+# Another avenue would be to predict goal difference in terms of Home_Score - Away_Score based on the individual home and away stats. I think the highest performing model will be something along these lines. However it will double the number of initial variables (one of each type for home and away), and I don't feel that I understand the game well enough to make intelligent transformations of so many interacting variables.
+
+# So let's start with option 1 and do some simpler transformations of the variables from our previous model.
+
+
+
 
