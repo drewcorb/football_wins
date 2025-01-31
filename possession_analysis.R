@@ -328,7 +328,7 @@ ggplot_pdp(pdp_PrgR_Receiving, PrgR_Receiving) +
 # ==== Second iteration of possession investigation ====
 # We gained information about some of the most important possession statistics toward modeling goal differential, however the most important ones are highly correlated with each other. If we transform/remove some of those, it's possible that other important statistics will emerge.
 
-# Another avenue would be to predict goal difference in terms of Home_Score - Away_Score based on the individual home and away stats. I think the highest performing model will be something along these lines. However it will double the number of initial variables (one of each type for home and away), and I don't feel that I understand the game well enough to make intelligent transformations of so many interacting variables.
+# Another avenue would be to predict goal difference in terms of Home_Score - Away_Score based on the individual home and away stats. I think the highest performing model will be something along these lines. However it will double the number of initial variables (one of each type for home and away), and I don't feel that I yet understand the game well enough to make intelligent transformations of so many interacting variables.
 
 # So let's start with option 1 and do some simpler transformations of the variables from our previous model.
 
