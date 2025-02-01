@@ -496,18 +496,19 @@ possession2_sa <-
   )
 
 show_best(possession2_sa
-          , metric = "mae")
+          , metric = "mae"
+          , n = 10)
 autoplot(possession2_sa, type = "performance")
 autoplot(possession2_sa, type = "parameters")
 
 # There are several hyperparameter sets with equivalent out of sample mean(mae) =1.32. Let's use one that is minimizes complexity of each tree, with tree_depth = 4 (as opposed to others that are 5 or 6).
 possession2_tuned_params <-
-  tibble(mtry = 12
-         , min_n = 28
-         , tree_depth = 4
-         , learn_rate = 0.0174
-         , loss_reduction = 0.165
-         , sample_size = 0.159)
+  tibble(mtry = 9
+         , min_n = 29
+         , tree_depth = 5
+         , learn_rate = 0.0142
+         , loss_reduction = 0.0803
+         , sample_size = 0.367)
 
 possession2_final_workflow <-
   possession2_workflow |>
@@ -532,6 +533,8 @@ resample_metrics <-
 split_performance <- collect_metrics(resample_metrics)
 split_performance
 
+# The performance of this version of the model is quite similar to the first, (equivalent training mae of 1.28, near-equivalent splits mae of 1.32 and 1.33), despite the fact we reduced our number of variables from 16 to 13. I'm pleased with the fact that we essentially maintained the same level of accuracy while significantly simplifying the model, which hopefully will reduce our chances of overfitting.
+
 possession_model_performance <-
   possession_model_performance |>
   bind_rows(tibble(model_iteration = 2
@@ -539,3 +542,52 @@ possession_model_performance <-
                    , split_mae = pull(split_performance, mean))
   )
 
+# ==== Explore the second model ====
+
+# We can examine variable importance to get an idea of which variables make the biggest impact on goal difference. Let's start by plotting the gain attributed to each variable.
+possession2_final_fit |>
+  pull_workflow_fit() |>
+  vip(geom = "point"
+      # , method = "permute"
+      # , train = defense_model_data
+      # , target = "Goals_Allowed"
+      # , metric = "RMSE"
+      # , pred_wrapper = predict
+  )
+# How about that?! The two variables that we created for this model (Touch_Carry_Pen_Pct and root_Touches_Carries) by far contribute the most gain to the xgboost model.
+
+possession2_explainer <-
+  explain_tidymodels(
+    model = possession2_final_fit
+    , data = possession2_model_data |> select(-Goal_Difference)
+    , y = possession2_model_data$Goal_Difference
+    , label = "possession xgboost model"
+    , verbose = FALSE
+  )
+
+# Now let's examine the feature importance by permuting each feature values amongst the observations..
+permute_vip2 <- model_parts(possession2_explainer
+                            , loss_function = loss_root_mean_square)
+
+ggplot_importance(permute_vip2)
+# The same two variables (Touch_Carry_Pen_Pct and root_Touches_Carries) stand out in this variable importance plot. Of the rest, it appears PrgR_Receiving (the number of progressive passes received) is slightly more important than the others, but it's a very small distinction compared to the top two variables.
+
+# Let's examine the PDPs of our two most important variables.
+
+pdp_Touch_Carry_Pen_Pct <- model_profile(possession2_explainer, N = 500
+                                         , variables = "Touch_Carry_Pen_Pct")
+
+ggplot_pdp(pdp_Att_Pen_Touches, Att_Pen_Touches) +
+  labs(x = "Touch_Carry_Pen_Pct", y = "Goal difference"
+       , color = NULL)
+# Here we see that most of the action takes place in the range of 0 to 50% of touches and carries in the attacking penalty area. I think this makes intuitive sense, as it's inconceivable for a team to have more than half of its touches in the attacking penalty area. We can see the break even point (crosses the 0 goal difference line) at about 15% of the action in the attacking penalty area, and the returns diminish (though very slowly) as the percent approaches 50.
+
+pdp_root_Touches_Carries <- model_profile(possession2_explainer, N = 1000, variables = "root_Touches_Carries")
+
+ggplot_pdp(pdp_root_Touches_Carries, root_Touches_Carries) +
+  labs(x = "root_Touches_Carries", y = "Goal difference"
+       , color = NULL) +
+  scale_x_continuous(breaks = seq(from = 100, to = 1000, by = 100))
+# Here we see a very well-formed S-curve. Below about 400 touches and carries, it the goal difference doesn't get much worse. Then we see a roughly linear increase in goal difference until about 750 touches and carries before it levels out again. Interestingly, the lower asymptote is only just below 0 goal difference, while the upper asymptote is near a goal difference of 2. I wonder if this suggests that teams with low numbers of touches and carries tend to be defensive teams that both allow and score few goals, but teams that dominate on possession tend to generate large leads. If that is true, then it might be true that a very bad team can try to climb to the middle of the table simply by improving its defense, but in order to reach the top the team must assume a possession/attack focused strategy.
+
+# There is clearly more to explore here, but let's leave possession for the time being. I've already learned a lot from this!
