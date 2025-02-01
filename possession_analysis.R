@@ -93,8 +93,9 @@ possession_exploration |>
 
 
 # There are still a lot of correlated variables here, but with my lack of subject matter knowledge, I'm concerned about doing any more selecting. Let's progress to building a model, and then perhaps we can learn more from the model's properties.
+# ==== Build a model ====
 
-possession_predictor_variables <-
+possession_predictors <-
   possession_exploration |>
   select(
     -Live_Touches
@@ -104,33 +105,26 @@ possession_predictor_variables <-
   ) |>
   colnames()
 
+num_predictors_possession <- length(possession_predictors)
+
 possession_model_data <-
   possession_data |>
-  select(all_of(possession_predictor_variables), Goal_Difference)
-
-# ==== Build a model ====
-
+  select(all_of(possession_predictors), Goal_Difference)
 # There's plenty more we can explore with the data but let's first build the structure of a simple model.
 
 # Let's use n-fold cross-validation so that we can test out some hyperparameter values on out-of-sample data. Let's also stratify by the outcome variable.
 
 possession_folds <- vfold_cv(possession_model_data
-                          , v = 5
-                          , strata = Goal_Difference)
+                             , v = 5
+                             , strata = Goal_Difference)
 
 # create the recipe
 possession_recipe <-
   recipe(Goal_Difference ~ .
          , data = possession_model_data)
-  # make sure the League and Match_Date columns are not treated as predictors
-  # update_role(League, new_role = "league") |>
-  # update_role(Match_Date, new_role = "match_date")
-
-
-possession_predictors <-
-  possession_recipe$var_info |> filter(role == "predictor") |> pull(variable)
-
-num_predictors_possession <- length(possession_predictors)
+# make sure the League and Match_Date columns are not treated as predictors
+# update_role(League, new_role = "league") |>
+# update_role(Match_Date, new_role = "match_date")
 
 # specify the model
 possession_model <-
@@ -203,6 +197,26 @@ possession_final_workflow <-
 possession_final_fit <-
   possession_final_workflow |>
   fit(possession_model_data)
+
+# Before moving on, let's record the performance of the model.
+train_performance <- # performance over the training set
+  predict(possession_final_fit, possession_model_data) |>
+  bind_cols(possession_model_data |> select(Goal_Difference)) |>
+  mae(Goal_Difference, .pred)
+train_performance
+
+# also record the average mae across all the resamples, which will measure the model's out-of-sample performance
+resample_metrics <-
+  fit_resamples(object = possession_final_workflow
+                , resamples = possession_folds
+                , metrics = metric_set(mae))
+split_performance <- collect_metrics(resample_metrics)
+split_performance
+
+possession_model_performance <-
+  tibble(model_iteration = 1
+         , train_mae = pull(train_performance, .estimate)
+         , split_mae = pull(split_performance, mean))
 
 # ==== Explore the model ====
 
@@ -323,7 +337,6 @@ pdp_PrgR_Receiving <- model_profile(possession_explainer, N = 1000, variables = 
 ggplot_pdp(pdp_PrgR_Receiving, PrgR_Receiving) +
   labs(x = "PrgR_Receiving", y = "Goal difference"
        , color = NULL)
-# Examining the plot for clearances shows that increasing the number of clearances has the largest impact on reducing goals allowed in the range of 10 to 30.
 
 # ==== Second iteration of possession investigation ====
 # We gained information about some of the most important possession statistics toward modeling goal differential, however the most important ones are highly correlated with each other. If we transform/remove some of those, it's possible that other important statistics will emerge.
@@ -332,6 +345,197 @@ ggplot_pdp(pdp_PrgR_Receiving, PrgR_Receiving) +
 
 # So let's start with option 1 and do some simpler transformations of the variables from our previous model.
 
+# Beginning with Touches_Touches and Carries_Carries, let's create a new variable that is the geometric mean of these two:
+possession_exploration |>
+  select(all_of(possession_predictors)) |>
+  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+         # let's also convert attack penalty touches and CPA_Carries into a similar type of variable, but as a fraction of the one we just defined
+         , Touch_Carry_Pen_Pct =
+           sqrt(Att_Pen_Touches*CPA_Carries) /
+           sqrt(Touches_Touches*Carries_Carries)
+         ) |>
+  select(-Touches_Touches, -Att_Pen_Touches
+         , -Carries_Carries, -CPA_Carries) |>
+  cor() |> # compute correlation 
+  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
+           , tl.col = "black"
+           , method = "ellipse")
+  
+# We can see that total distance of carries and progressive distance of carries are both highly correlated with several variables. Since we already have a measure of the total number of carries, let's instead convert these to units of distance per carry.
 
+possession_exploration |>
+  select(all_of(possession_predictors)) |>
+  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+         # convert attack penalty touches and CPA_Carries into fraction of geometric means
+         , Touch_Carry_Pen_Pct =
+           sqrt(Att_Pen_Touches*CPA_Carries) /
+           sqrt(Touches_Touches*Carries_Carries)
+         # distance and progressive distance per carry
+         , Dist_per_Carry = TotDist_Carries/Carries_Carries
+         , PrgDist_per_Carry = PrgDist_Carries/Carries_Carries
+  ) |>
+  select(-Touches_Touches, -Att_Pen_Touches
+         , -Carries_Carries, -CPA_Carries
+         , -TotDist_Carries, -PrgDist_Carries) |>
+  cor() |> # compute correlation 
+  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
+           , tl.col = "black"
+           , method = "ellipse")
 
+# We see that successful percent take ons and tackled percent take ons are strongly negatively correlated with each other. Because of that, if we were to take the geometric or arithmetic mean of the two variables, then we might lose information about them both (consider the information carried in two lines y1 = x and y2 = -x, vs the information carried in z = -x^2). So let's just keep successful percent take ons, and remove the Tkld percent variable.
+
+possession2_exploration <-
+  possession_exploration |>
+  select(all_of(possession_predictors)) |>
+  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+         # convert attack penalty touches and CPA_Carries into fraction of geometric means
+         , Touch_Carry_Pen_Pct =
+           sqrt(Att_Pen_Touches*CPA_Carries) /
+           sqrt(Touches_Touches*Carries_Carries)
+         # distance and progressive distance per carry
+         , Dist_per_Carry = TotDist_Carries/Carries_Carries
+         , PrgDist_per_Carry = PrgDist_Carries/Carries_Carries
+  ) |>
+  select(-Touches_Touches, -Att_Pen_Touches
+         , -Carries_Carries, -CPA_Carries
+         , -TotDist_Carries, -PrgDist_Carries
+         , -Tkld_percent_Take_Ons)
+
+possession2_exploration |>
+  cor() |> # compute correlation 
+  corrplot(col = colorRampPalette(c("#91CBD765", "#CA225E"))(200)
+           , tl.col = "black"
+           , method = "ellipse")
+
+# We're down from 16 to 13 variables now, and largely they are less correlated with each other than we began with. Let's build another model to predict Goal_Difference and see how it compares with our first try.
+
+# ==== Build the second model ====
+
+# There's plenty more we can explore with the data but let's first build the structure of a simple model.
+
+possession2_predictors <- colnames(possession2_exploration)
+
+num_predictors_possession2 <- length(possession2_predictors)
+
+possession2_model_data <-
+  possession_data |>
+  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+         # convert attack penalty touches and CPA_Carries into fraction of geometric means
+         , Touch_Carry_Pen_Pct =
+           sqrt(Att_Pen_Touches*CPA_Carries) /
+           sqrt(Touches_Touches*Carries_Carries)
+         # distance and progressive distance per carry
+         , Dist_per_Carry = TotDist_Carries/Carries_Carries
+         , PrgDist_per_Carry = PrgDist_Carries/Carries_Carries
+  ) |>
+  select(all_of(possession2_predictors), Goal_Difference)
+# There's plenty more we can explore with the data but let's first build the structure of a simple model.
+
+# Let's use n-fold cross-validation so that we can test out some hyperparameter values on out-of-sample data. Let's also stratify by the outcome variable.
+
+possession2_folds <- vfold_cv(possession2_model_data
+                              , v = 5
+                              , strata = Goal_Difference)
+
+# create the recipe
+possession2_recipe <-
+  recipe(Goal_Difference ~ .
+         , data = possession2_model_data)
+# make sure the League and Match_Date columns are not treated as predictors
+# update_role(League, new_role = "league") |>
+# update_role(Match_Date, new_role = "match_date")
+
+# specify the model
+possession2_model <-
+  boost_tree(mtry = tune()
+             , trees = 400 # let's semi-arbitrarily say 400 is just right
+             , min_n = tune() 
+             , tree_depth = tune()
+             , learn_rate = tune() # eta
+             , loss_reduction = tune() # gamma
+             , sample_size = tune()) |>
+  set_engine("xgboost") |>
+  set_mode("regression")
+
+possession2_workflow <-
+  workflow() |>
+  add_recipe(possession2_recipe) |>
+  add_model(possession2_model)
+
+possession2_eval_metrics <- metric_set(mae)
+
+# Set up some ranges for tuning parameters
+possession2_params <-
+  possession2_workflow |>
+  extract_parameter_set_dials() |>
+  update(mtry = mtry(c(3, round(0.8*num_predictors_possession)))) |>
+  update(tree_depth = tree_depth(c(2, 6))) |>
+  update(learn_rate = learn_rate(c(-5, -1))) # 10^-5 to 10^-1
+
+possession2_start_grid <-
+  possession2_params |>
+  grid_max_entropy(size = 64)
+
+possession2_initial <-
+  possession2_workflow |>
+  tune_grid(resamples = possession2_folds
+            , grid = possession2_start_grid
+            , metrics = possession2_eval_metrics)
+
+ctrl_sa <- control_sim_anneal(verbose = TRUE, no_improve = 20L)
+
+possession2_sa <-
+  possession_workflow |>
+  tune_sim_anneal(
+    resamples = possession_folds,
+    metrics = possession_eval_metrics,
+    initial = possession_initial,
+    param_info = possession_params,
+    iter = 200,
+    control = ctrl_sa
+  )
+
+show_best(possession2_sa
+          , metric = "mae")
+autoplot(possession2_sa, type = "performance")
+autoplot(possession2_sa, type = "parameters")
+
+# There are several hyperparameter sets with equivalent out of sample mean(mae) =1.32. Let's use one that is minimizes complexity of each tree, with tree_depth = 4 (as opposed to others that are 5 or 6).
+possession2_tuned_params <-
+  tibble(mtry = 12
+         , min_n = 28
+         , tree_depth = 4
+         , learn_rate = 0.0174
+         , loss_reduction = 0.165
+         , sample_size = 0.159)
+
+possession2_final_workflow <-
+  possession2_workflow |>
+  finalize_workflow(possession2_tuned_params)
+
+possession2_final_fit <-
+  possession2_final_workflow |>
+  fit(possession2_model_data)
+
+# Before moving on, let's record the performance of the model.
+train_performance <- # performance over the training set
+  predict(possession2_final_fit, possession2_model_data) |>
+  bind_cols(possession2_model_data |> select(Goal_Difference)) |>
+  mae(Goal_Difference, .pred)
+train_performance
+
+# also record the average mae across all the resamples, which will measure the model's out-of-sample performance
+resample_metrics <-
+  fit_resamples(object = possession2_final_workflow
+                , resamples = possession2_folds
+                , metrics = metric_set(mae))
+split_performance <- collect_metrics(resample_metrics)
+split_performance
+
+possession_model_performance <-
+  possession_model_performance |>
+  bind_rows(tibble(model_iteration = 2
+                   , train_mae = pull(train_performance, .estimate)
+                   , split_mae = pull(split_performance, mean))
+  )
 
