@@ -348,11 +348,11 @@ ggplot_pdp(pdp_PrgR_Receiving, PrgR_Receiving) +
 # Beginning with Touches_Touches and Carries_Carries, let's create a new variable that is the geometric mean of these two:
 possession_exploration |>
   select(all_of(possession_predictors)) |>
-  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+  mutate(Touches_Carries = (Touches_Touches + Carries_Carries) / 2
          # let's also convert attack penalty touches and CPA_Carries into a similar type of variable, but as a fraction of the one we just defined
          , Touch_Carry_Pen_Pct =
-           sqrt(Att_Pen_Touches*CPA_Carries) /
-           sqrt(Touches_Touches*Carries_Carries)
+           (Att_Pen_Touches + CPA_Carries) /
+           (Touches_Touches + Carries_Carries)
          ) |>
   select(-Touches_Touches, -Att_Pen_Touches
          , -Carries_Carries, -CPA_Carries) |>
@@ -365,11 +365,11 @@ possession_exploration |>
 
 possession_exploration |>
   select(all_of(possession_predictors)) |>
-  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+  mutate(Touches_Carries = (Touches_Touches + Carries_Carries) / 2
          # convert attack penalty touches and CPA_Carries into fraction of geometric means
          , Touch_Carry_Pen_Pct =
-           sqrt(Att_Pen_Touches*CPA_Carries) /
-           sqrt(Touches_Touches*Carries_Carries)
+           (Att_Pen_Touches + CPA_Carries) /
+           (Touches_Touches + Carries_Carries)
          # distance and progressive distance per carry
          , Dist_per_Carry = TotDist_Carries/Carries_Carries
          , PrgDist_per_Carry = PrgDist_Carries/Carries_Carries
@@ -387,11 +387,11 @@ possession_exploration |>
 possession2_exploration <-
   possession_exploration |>
   select(all_of(possession_predictors)) |>
-  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+  mutate(Touches_Carries = sqrt(Touches_Touches + Carries_Carries) / 2
          # convert attack penalty touches and CPA_Carries into fraction of geometric means
          , Touch_Carry_Pen_Pct =
-           sqrt(Att_Pen_Touches*CPA_Carries) /
-           sqrt(Touches_Touches*Carries_Carries)
+           (Att_Pen_Touches + CPA_Carries) /
+           (Touches_Touches + Carries_Carries)
          # distance and progressive distance per carry
          , Dist_per_Carry = TotDist_Carries/Carries_Carries
          , PrgDist_per_Carry = PrgDist_Carries/Carries_Carries
@@ -419,11 +419,11 @@ num_predictors_possession2 <- length(possession2_predictors)
 
 possession2_model_data <-
   possession_data |>
-  mutate(root_Touches_Carries = sqrt(Touches_Touches*Carries_Carries)
+  mutate(Touches_Carries = (Touches_Touches + Carries_Carries) / 2
          # convert attack penalty touches and CPA_Carries into fraction of geometric means
          , Touch_Carry_Pen_Pct =
-           sqrt(Att_Pen_Touches*CPA_Carries) /
-           sqrt(Touches_Touches*Carries_Carries)
+           (Att_Pen_Touches+CPA_Carries) /
+           (Touches_Touches+Carries_Carries)
          # distance and progressive distance per carry
          , Dist_per_Carry = TotDist_Carries/Carries_Carries
          , PrgDist_per_Carry = PrgDist_Carries/Carries_Carries
